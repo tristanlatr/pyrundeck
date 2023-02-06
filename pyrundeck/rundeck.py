@@ -44,10 +44,16 @@ class Rundeck(object):
         )
         return r.cookies["JSESSIONID"]
 
-    def __request(
-        self, method, url, params=None, upload_file=None, format="json"
-    ):
-        logger.info("{} {} Params: {}".format(method, url, params))
+    def __request(self, method, url, params=None, upload_file=None, headers=None, format="json"):
+        logger.info(f"{method} {url} Params: {params}")
+        valid_format = ["json", "xml", "yaml"]
+        if format not in valid_format:
+            raise ValueError(
+                "Invalid Format. Possible Values are: {}".format(
+                    " ,".join(valid_format)
+                )
+            )
+            
         cookies = dict()
         if self.auth_cookie:
             cookies["JSESSIONID"] = self.auth_cookie
@@ -57,6 +63,15 @@ class Rundeck(object):
             "Content-Type": "application/{}".format(format),
             "X-Rundeck-Auth-Token": self.token,
         }
+        # See https://github.com/rundeck/rundeck/issues/1923
+        if method in ("POST", "PUT"):
+            h["Content-Type"] = "application/json"
+            format = 'json'
+
+        # Allow end-users to override headers (ex. "Accept": "text/plain")
+        if headers:
+            h.update(headers)
+
         options = {
             "cookies": cookies,
             "headers": h,
@@ -78,25 +93,22 @@ class Rundeck(object):
                 return r.json()
             except ValueError as e:
                 logger.error(e)
-                return r.text
+                raise
         else:
             return r.text
 
     def __get(self, url, params=None, format="json"):
-        valid_format = ["json", "xml", "yaml"]
-        if format not in valid_format:
-            raise ValueError(
-                "Invalid Format. Possible Values are: {}".format(
-                    " ,".join(valid_format)
-                )
-            )
+        
         return self.__request("GET", url, params, format=format)
 
-    def __post(self, url, params=None, upload_file=None):
-        return self.__request("POST", url, params, upload_file)
+    def __get(self, url, params=None, format="json", headers=None):
+        return self.__request("GET", url, params, format=format, headers=headers)
 
-    def __delete(self, url, params=None):
-        return self.__request("DELETE", url, params)
+    def __post(self, url, params=None, headers=None):
+        return self.__request("POST", url, params, headers=headers)
+
+    def __delete(self, url, params=None, headers=None):
+        return self.__request("DELETE", url, params, headers=headers)
 
     def list_tokens(self, user=None):
         url = "{}/tokens".format(self.API_URL)
@@ -298,9 +310,20 @@ class Rundeck(object):
         params = {"groupPath": groupPath}
         return self.__post(url, params=params)
 
-    def execution_output_by_id(self, exec_id):
-        url = "{}/execution/{}/output".format(self.API_URL, exec_id)
-        return self.__get(url)
+    def execution_output_by_id(self, exec_id, output_format='text'):
+        url = f"{self.API_URL}/execution/{exec_id}/output"
+        params = {}
+        headers = {}
+        if output_format:
+            params["format"] = output_format
+            if output_format == "xml":
+                headers["Accept"] = "application/xml"
+            elif output_format == "json":
+                headers["Accept"] = "application/json"
+            elif output_format == "text":
+                headers["Accept"] = "text/plain"
+
+        return self.__get(url, params=params, headers=headers)
 
     def execution_info_by_id(self, exec_id):
         url = "{}/execution/{}".format(self.API_URL, exec_id)
